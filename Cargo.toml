@@ -3,6 +3,6 @@ name = "shell-history-lens"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-description = "Parses bash and zsh shell history files into structured, typed entries"
+description = "Parses bash, zsh, and fish shell history files into structured, typed entries"
 
 [dependencies]
