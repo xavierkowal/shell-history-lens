@@ -47,6 +47,13 @@ pub fn parse(input: &str) -> Vec<HistoryEntry> {
     entries
 }
 
+/// Whether `line` starts with a well-formed `: <start>:<elapsed>;` prefix,
+/// without caring about the command text that follows. Used by format
+/// detection, which only needs to know if a line looks like this dialect.
+pub(crate) fn looks_like_extended_prefix(line: &str) -> bool {
+    parse_extended_prefix(line).is_some()
+}
+
 fn parse_extended_prefix(line: &str) -> Option<(i64, String)> {
     let rest = line.strip_prefix(": ")?;
 

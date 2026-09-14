@@ -57,6 +57,12 @@ fn main() {
     for entry in parse_fish(fish_history) {
         println!("{:?}", entry);
     }
+
+    // Not sure which shell wrote the file? `parse_auto` looks at the first
+    // non-blank line and picks the matching parser.
+    for entry in shell_history_lens::parse_auto(fish_history) {
+        println!("{:?}", entry);
+    }
 }
 ```
 
@@ -67,9 +73,10 @@ fn main() {
   commands and semicolons embedded in the command text.
 - `parse_fish` — fish's `fish_history` format, including its own
   backslash/newline escaping and `paths:` blocks.
-
-Format auto-detection isn't implemented yet — callers pick the parser that
-matches their file.
+- `detect` / `parse_auto` — guess the format from the file's first
+  non-blank line and parse it accordingly. Fish and zsh's extended format
+  both have an unambiguous marker on every line; anything else, including
+  plain zsh history, is treated as bash.
 
 ## License
 
