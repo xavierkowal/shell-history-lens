@@ -11,6 +11,12 @@ use crate::entry::HistoryEntry;
 /// original newlines restored. A line that doesn't match the extended
 /// format at all (SHARE_HISTORY was off when it was written, say) is kept
 /// as a plain command with no timestamp.
+///
+/// A command that itself ends in a literal backslash is written by zsh with
+/// that backslash doubled, so a run of trailing backslashes is only a
+/// continuation marker when its length is odd: one backslash means "join the
+/// next line", two mean "the command really ends in `\`", three mean a
+/// literal `\` followed by a continuation, and so on.
 pub fn parse(input: &str) -> Vec<HistoryEntry> {
     let mut entries = Vec::new();
     let mut lines = input.lines();
@@ -19,8 +25,19 @@ pub fn parse(input: &str) -> Vec<HistoryEntry> {
         let line = raw_line.trim_end_matches('\r');
 
         if let Some((timestamp, mut command)) = parse_extended_prefix(line) {
-            while command.ends_with('\\') {
-                command.pop();
+            loop {
+                // Collapse the trailing run of backslashes down to half its
+                // length (each escaped pair is one literal backslash). An
+                // odd run has one marker backslash left over after pairing
+                // off the rest, which means "join the next line".
+                let run = trailing_backslash_count(&command);
+                command.truncate(command.len() - run);
+                for _ in 0..run / 2 {
+                    command.push('\\');
+                }
+                if run % 2 == 0 {
+                    break;
+                }
                 match lines.next() {
                     Some(next_raw) => {
                         command.push('\n');
@@ -52,6 +69,10 @@ pub fn parse(input: &str) -> Vec<HistoryEntry> {
 /// detection, which only needs to know if a line looks like this dialect.
 pub(crate) fn looks_like_extended_prefix(line: &str) -> bool {
     parse_extended_prefix(line).is_some()
+}
+
+fn trailing_backslash_count(command: &str) -> usize {
+    command.chars().rev().take_while(|&c| c == '\\').count()
 }
 
 fn parse_extended_prefix(line: &str) -> Option<(i64, String)> {
@@ -111,6 +132,21 @@ mod tests {
                 name: "multi-line command joins continuation lines",
                 input: ": 1690000000:0;echo one\\\nand two\n",
                 expected: vec![entry("echo one\nand two", Some(1690000000))],
+            },
+            Case {
+                name: "doubled trailing backslash is a literal, not a continuation",
+                input: ": 1690000000:0;echo one\\\\\n",
+                expected: vec![entry("echo one\\", Some(1690000000))],
+            },
+            Case {
+                name: "literal backslash followed by a real continuation",
+                input: ": 1690000000:0;echo one\\\\\\\nand two\n",
+                expected: vec![entry("echo one\\\nand two", Some(1690000000))],
+            },
+            Case {
+                name: "continuation marker missing its next line is dropped",
+                input: ": 1690000000:0;echo one\\",
+                expected: vec![entry("echo one", Some(1690000000))],
             },
             Case {
                 name: "empty command after the separator",
