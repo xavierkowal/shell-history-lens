@@ -11,41 +11,59 @@ use crate::entry::HistoryEntry;
 /// newline as `\n`; those are undone here rather than left for the caller
 /// to deal with. Lines that aren't part of a `- cmd:` entry are ignored.
 pub fn parse(input: &str) -> Vec<HistoryEntry> {
-    let mut entries = Vec::new();
-    let mut lines = input.lines().peekable();
+    iter(input).collect()
+}
 
-    while let Some(raw_line) = lines.next() {
-        let line = raw_line.trim_end_matches('\r');
-        let Some(escaped_command) = line.strip_prefix("- cmd: ") else {
-            continue;
-        };
+/// Like [`parse`], but yields entries one at a time instead of collecting
+/// them into a `Vec` up front. Lets a caller stop early or process a history
+/// file too large to want fully materialized in memory.
+pub fn iter(input: &str) -> FishHistory<'_> {
+    FishHistory {
+        lines: input.lines().peekable(),
+    }
+}
 
-        let command = unescape(escaped_command);
-        let mut timestamp = None;
+pub struct FishHistory<'a> {
+    lines: std::iter::Peekable<std::str::Lines<'a>>,
+}
 
-        while let Some(next_raw) = lines.peek() {
-            let next_line = next_raw.trim_end_matches('\r');
-            if let Some(when) = next_line.strip_prefix("  when: ") {
-                timestamp = when.trim().parse().ok();
-                lines.next();
-            } else if next_line == "  paths:" {
-                lines.next();
-                while let Some(path_raw) = lines.peek() {
-                    if path_raw.trim_end_matches('\r').starts_with("    - ") {
-                        lines.next();
-                    } else {
-                        break;
+impl<'a> Iterator for FishHistory<'a> {
+    type Item = HistoryEntry;
+
+    fn next(&mut self) -> Option<HistoryEntry> {
+        while let Some(raw_line) = self.lines.next() {
+            let line = raw_line.trim_end_matches('\r');
+            let Some(escaped_command) = line.strip_prefix("- cmd: ") else {
+                continue;
+            };
+
+            let command = unescape(escaped_command);
+            let mut timestamp = None;
+
+            while let Some(next_raw) = self.lines.peek() {
+                let next_line = next_raw.trim_end_matches('\r');
+                if let Some(when) = next_line.strip_prefix("  when: ") {
+                    timestamp = when.trim().parse().ok();
+                    self.lines.next();
+                } else if next_line == "  paths:" {
+                    self.lines.next();
+                    while let Some(path_raw) = self.lines.peek() {
+                        if path_raw.trim_end_matches('\r').starts_with("    - ") {
+                            self.lines.next();
+                        } else {
+                            break;
+                        }
                     }
+                } else {
+                    break;
                 }
-            } else {
-                break;
             }
+
+            return Some(HistoryEntry { command, timestamp });
         }
 
-        entries.push(HistoryEntry { command, timestamp });
+        None
     }
-
-    entries
 }
 
 fn unescape(s: &str) -> String {
@@ -74,7 +92,7 @@ fn unescape(s: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::parse;
+    use super::{iter, parse};
     use crate::entry::HistoryEntry;
 
     struct Case {
@@ -151,6 +169,22 @@ mod tests {
         for case in cases {
             let got = parse(case.input);
             assert_eq!(got, case.expected, "case failed: {}", case.name);
+
+            let got_from_iter: Vec<HistoryEntry> = iter(case.input).collect();
+            assert_eq!(got_from_iter, case.expected, "iter case failed: {}", case.name);
         }
+    }
+
+    #[test]
+    fn iter_stops_after_the_requested_number_of_entries() {
+        let input = "- cmd: ls\n  when: 1690000000\n- cmd: pwd\n  when: 1690000001\n- cmd: whoami\n  when: 1690000002\n";
+        let first_two: Vec<HistoryEntry> = iter(input).take(2).collect();
+        assert_eq!(
+            first_two,
+            vec![
+                entry("ls", Some(1690000000)),
+                entry("pwd", Some(1690000001)),
+            ]
+        );
     }
 }

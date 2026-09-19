@@ -18,50 +18,68 @@ use crate::entry::HistoryEntry;
 /// next line", two mean "the command really ends in `\`", three mean a
 /// literal `\` followed by a continuation, and so on.
 pub fn parse(input: &str) -> Vec<HistoryEntry> {
-    let mut entries = Vec::new();
-    let mut lines = input.lines();
+    iter(input).collect()
+}
 
-    while let Some(raw_line) = lines.next() {
-        let line = raw_line.trim_end_matches('\r');
-
-        if let Some((timestamp, mut command)) = parse_extended_prefix(line) {
-            loop {
-                // Collapse the trailing run of backslashes down to half its
-                // length (each escaped pair is one literal backslash). An
-                // odd run has one marker backslash left over after pairing
-                // off the rest, which means "join the next line".
-                let run = trailing_backslash_count(&command);
-                command.truncate(command.len() - run);
-                for _ in 0..run / 2 {
-                    command.push('\\');
-                }
-                if run % 2 == 0 {
-                    break;
-                }
-                match lines.next() {
-                    Some(next_raw) => {
-                        command.push('\n');
-                        command.push_str(next_raw.trim_end_matches('\r'));
-                    }
-                    None => break,
-                }
-            }
-            entries.push(HistoryEntry {
-                command,
-                timestamp: Some(timestamp),
-            });
-        } else {
-            if line.trim().is_empty() {
-                continue;
-            }
-            entries.push(HistoryEntry {
-                command: line.to_string(),
-                timestamp: None,
-            });
-        }
+/// Like [`parse`], but yields entries one at a time instead of collecting
+/// them into a `Vec` up front. Lets a caller stop early or process a history
+/// file too large to want fully materialized in memory.
+pub fn iter(input: &str) -> ZshHistory<'_> {
+    ZshHistory {
+        lines: input.lines(),
     }
+}
 
-    entries
+pub struct ZshHistory<'a> {
+    lines: std::str::Lines<'a>,
+}
+
+impl<'a> Iterator for ZshHistory<'a> {
+    type Item = HistoryEntry;
+
+    fn next(&mut self) -> Option<HistoryEntry> {
+        while let Some(raw_line) = self.lines.next() {
+            let line = raw_line.trim_end_matches('\r');
+
+            if let Some((timestamp, mut command)) = parse_extended_prefix(line) {
+                loop {
+                    // Collapse the trailing run of backslashes down to half its
+                    // length (each escaped pair is one literal backslash). An
+                    // odd run has one marker backslash left over after pairing
+                    // off the rest, which means "join the next line".
+                    let run = trailing_backslash_count(&command);
+                    command.truncate(command.len() - run);
+                    for _ in 0..run / 2 {
+                        command.push('\\');
+                    }
+                    if run % 2 == 0 {
+                        break;
+                    }
+                    match self.lines.next() {
+                        Some(next_raw) => {
+                            command.push('\n');
+                            command.push_str(next_raw.trim_end_matches('\r'));
+                        }
+                        None => break,
+                    }
+                }
+                return Some(HistoryEntry {
+                    command,
+                    timestamp: Some(timestamp),
+                });
+            } else {
+                if line.trim().is_empty() {
+                    continue;
+                }
+                return Some(HistoryEntry {
+                    command: line.to_string(),
+                    timestamp: None,
+                });
+            }
+        }
+
+        None
+    }
 }
 
 /// Whether `line` starts with a well-formed `: <start>:<elapsed>;` prefix,
@@ -94,7 +112,7 @@ fn parse_extended_prefix(line: &str) -> Option<(i64, String)> {
 
 #[cfg(test)]
 mod tests {
-    use super::parse;
+    use super::{iter, parse};
     use crate::entry::HistoryEntry;
 
     struct Case {
@@ -178,6 +196,22 @@ mod tests {
         for case in cases {
             let got = parse(case.input);
             assert_eq!(got, case.expected, "case failed: {}", case.name);
+
+            let got_from_iter: Vec<HistoryEntry> = iter(case.input).collect();
+            assert_eq!(got_from_iter, case.expected, "iter case failed: {}", case.name);
         }
+    }
+
+    #[test]
+    fn iter_stops_after_the_requested_number_of_entries() {
+        let input = ": 1690000000:0;ls -la\n: 1690000001:0;pwd\n: 1690000002:0;whoami\n";
+        let first_two: Vec<HistoryEntry> = iter(input).take(2).collect();
+        assert_eq!(
+            first_two,
+            vec![
+                entry("ls -la", Some(1690000000)),
+                entry("pwd", Some(1690000001)),
+            ]
+        );
     }
 }

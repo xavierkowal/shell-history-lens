@@ -47,9 +47,20 @@ pub fn parse_auto(input: &str) -> Vec<HistoryEntry> {
     }
 }
 
+/// Like [`parse_auto`], but yields entries one at a time instead of
+/// collecting them into a `Vec` up front. The concrete iterator type differs
+/// per format, so this returns a boxed trait object rather than exposing it.
+pub fn iter_auto(input: &str) -> Box<dyn Iterator<Item = HistoryEntry> + '_> {
+    match detect(input) {
+        HistoryFormat::Bash => Box::new(bash::iter(input)),
+        HistoryFormat::ZshExtended => Box::new(zsh::iter(input)),
+        HistoryFormat::Fish => Box::new(fish::iter(input)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{detect, parse_auto, HistoryFormat};
+    use super::{detect, iter_auto, parse_auto, HistoryFormat};
     use crate::entry::HistoryEntry;
 
     struct Case {
@@ -123,5 +134,20 @@ mod tests {
                 timestamp: Some(1690000000),
             }]
         );
+    }
+
+    #[test]
+    fn iter_auto_dispatches_to_the_detected_parser() {
+        let fish_history = "- cmd: ls -la\n  when: 1690000000\n";
+        let got: Vec<HistoryEntry> = iter_auto(fish_history).collect();
+        assert_eq!(got, parse_auto(fish_history));
+
+        let zsh_history = ": 1690000000:0;echo a; echo b\n";
+        let got: Vec<HistoryEntry> = iter_auto(zsh_history).collect();
+        assert_eq!(got, parse_auto(zsh_history));
+
+        let bash_history = "#1690000000\nls -la\n";
+        let got: Vec<HistoryEntry> = iter_auto(bash_history).collect();
+        assert_eq!(got, parse_auto(bash_history));
     }
 }

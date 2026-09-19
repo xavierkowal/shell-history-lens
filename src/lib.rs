@@ -10,8 +10,8 @@ mod fish;
 mod format;
 mod zsh;
 
-pub use bash::parse as parse_bash;
+pub use bash::{iter as iter_bash, parse as parse_bash, BashHistory};
 pub use entry::HistoryEntry;
-pub use fish::parse as parse_fish;
-pub use format::{detect, parse_auto, HistoryFormat};
-pub use zsh::parse as parse_zsh_extended;
+pub use fish::{iter as iter_fish, parse as parse_fish, FishHistory};
+pub use format::{detect, iter_auto, parse_auto, HistoryFormat};
+pub use zsh::{iter as iter_zsh_extended, parse as parse_zsh_extended, ZshHistory};

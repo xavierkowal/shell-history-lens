@@ -63,6 +63,14 @@ fn main() {
     for entry in shell_history_lens::parse_auto(fish_history) {
         println!("{:?}", entry);
     }
+
+    // Each `parse_*` function collects into a `Vec` up front. `iter_*`
+    // returns the same entries lazily instead — `parse_bash` is just
+    // `iter_bash(input).collect()` — so a caller can stop as soon as it has
+    // what it needs without holding the whole file's worth of entries.
+    let first_git_command = shell_history_lens::iter_bash(bash_history)
+        .find(|entry| entry.command.starts_with("git"));
+    println!("{first_git_command:?}");
 }
 ```
 
@@ -77,6 +85,10 @@ fn main() {
   non-blank line and parse it accordingly. Fish and zsh's extended format
   both have an unambiguous marker on every line; anything else, including
   plain zsh history, is treated as bash.
+- `iter_bash` / `iter_zsh_extended` / `iter_fish` / `iter_auto` — the same
+  parsing, exposed as a lazy iterator instead of a `Vec`, for callers who
+  want to stop early or avoid holding a whole large history file's worth of
+  parsed entries at once.
 
 ## License
 

@@ -9,27 +9,47 @@ use crate::entry::HistoryEntry;
 /// stores it verbatim because it's a real comment the user typed at the
 /// prompt, so it comes back as a command with no timestamp attached.
 pub fn parse(input: &str) -> Vec<HistoryEntry> {
-    let mut entries = Vec::new();
-    let mut pending_timestamp: Option<i64> = None;
+    iter(input).collect()
+}
 
-    for raw_line in input.lines() {
-        let line = raw_line.trim_end_matches('\r');
-        if line.trim().is_empty() {
-            continue;
-        }
-
-        if let Some(timestamp) = parse_timestamp_comment(line) {
-            pending_timestamp = Some(timestamp);
-            continue;
-        }
-
-        entries.push(HistoryEntry {
-            command: line.to_string(),
-            timestamp: pending_timestamp.take(),
-        });
+/// Like [`parse`], but yields entries one at a time instead of collecting
+/// them into a `Vec` up front. Lets a caller stop early or process a history
+/// file too large to want fully materialized in memory.
+pub fn iter(input: &str) -> BashHistory<'_> {
+    BashHistory {
+        lines: input.lines(),
+        pending_timestamp: None,
     }
+}
 
-    entries
+pub struct BashHistory<'a> {
+    lines: std::str::Lines<'a>,
+    pending_timestamp: Option<i64>,
+}
+
+impl<'a> Iterator for BashHistory<'a> {
+    type Item = HistoryEntry;
+
+    fn next(&mut self) -> Option<HistoryEntry> {
+        for raw_line in self.lines.by_ref() {
+            let line = raw_line.trim_end_matches('\r');
+            if line.trim().is_empty() {
+                continue;
+            }
+
+            if let Some(timestamp) = parse_timestamp_comment(line) {
+                self.pending_timestamp = Some(timestamp);
+                continue;
+            }
+
+            return Some(HistoryEntry {
+                command: line.to_string(),
+                timestamp: self.pending_timestamp.take(),
+            });
+        }
+
+        None
+    }
 }
 
 fn parse_timestamp_comment(line: &str) -> Option<i64> {
@@ -42,7 +62,7 @@ fn parse_timestamp_comment(line: &str) -> Option<i64> {
 
 #[cfg(test)]
 mod tests {
-    use super::parse;
+    use super::{iter, parse};
     use crate::entry::HistoryEntry;
 
     struct Case {
@@ -106,6 +126,19 @@ mod tests {
         for case in cases {
             let got = parse(case.input);
             assert_eq!(got, case.expected, "case failed: {}", case.name);
+
+            let got_from_iter: Vec<HistoryEntry> = iter(case.input).collect();
+            assert_eq!(got_from_iter, case.expected, "iter case failed: {}", case.name);
         }
+    }
+
+    #[test]
+    fn iter_stops_after_the_requested_number_of_entries() {
+        let input = "#1690000000\nls -la\npwd\nwhoami\n";
+        let first_two: Vec<HistoryEntry> = iter(input).take(2).collect();
+        assert_eq!(
+            first_two,
+            vec![entry("ls -la", Some(1690000000)), entry("pwd", None)]
+        );
     }
 }
