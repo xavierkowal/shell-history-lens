@@ -90,9 +90,42 @@ fn unescape(s: &str) -> String {
     result
 }
 
+/// Serializes `entries` back into fish `fish_history` text.
+///
+/// Each entry becomes a `- cmd: <escaped command>` line, followed by a
+/// `  when: <epoch>` line if it has a timestamp. No `paths:` block is ever
+/// written back — [`parse`] only reads it, and `HistoryEntry` has nowhere
+/// to keep it, so a round trip through this crate drops it.
+pub fn write(entries: &[HistoryEntry]) -> String {
+    let mut out = String::new();
+    for entry in entries {
+        out.push_str("- cmd: ");
+        out.push_str(&escape(&entry.command));
+        out.push('\n');
+        if let Some(timestamp) = entry.timestamp {
+            out.push_str("  when: ");
+            out.push_str(&timestamp.to_string());
+            out.push('\n');
+        }
+    }
+    out
+}
+
+fn escape(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '\\' => result.push_str("\\\\"),
+            '\n' => result.push_str("\\n"),
+            other => result.push(other),
+        }
+    }
+    result
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{iter, parse};
+    use super::{iter, parse, write};
     use crate::entry::HistoryEntry;
 
     struct Case {
@@ -186,5 +219,35 @@ mod tests {
                 entry("pwd", Some(1690000001)),
             ]
         );
+    }
+
+    #[test]
+    fn write_produces_the_expected_text() {
+        let entries = vec![
+            entry("ls -la", Some(1690000000)),
+            entry("echo one\nand two", Some(1690000001)),
+            entry("no timestamp", None),
+        ];
+        assert_eq!(
+            write(&entries),
+            "- cmd: ls -la\n  when: 1690000000\n\
+             - cmd: echo one\\nand two\n  when: 1690000001\n\
+             - cmd: no timestamp\n"
+        );
+    }
+
+    #[test]
+    fn write_then_parse_round_trips() {
+        let cases: Vec<Vec<HistoryEntry>> = vec![
+            vec![entry("ls -la", Some(1690000000))],
+            vec![entry("echo one\nand two", Some(1690000000))],
+            vec![entry("echo a\\b", Some(1690000000))],
+            vec![entry("no timestamp", None)],
+            vec![],
+        ];
+
+        for entries in cases {
+            assert_eq!(parse(&write(&entries)), entries);
+        }
     }
 }

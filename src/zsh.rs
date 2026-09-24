@@ -110,9 +110,51 @@ fn parse_extended_prefix(line: &str) -> Option<(i64, String)> {
     Some((timestamp, rest[1..].to_string()))
 }
 
+/// Serializes `entries` back into zsh `EXTENDED_HISTORY` text.
+///
+/// An entry with a timestamp is written as `: <ts>:0;<command>`; the elapsed
+/// field isn't tracked by `HistoryEntry`, so it's always written as `0`. An
+/// entry without a timestamp is written as a bare line with no prefix,
+/// mirroring how [`parse`] falls back on lines that don't match the
+/// extended format.
+///
+/// A command with embedded newlines is split back across multiple lines
+/// joined by a trailing-backslash continuation, and any line that itself
+/// ends in one or more literal backslashes has that run doubled first so
+/// [`parse`] doesn't mistake it for (part of) a continuation marker.
+pub fn write(entries: &[HistoryEntry]) -> String {
+    let mut out = String::new();
+    for entry in entries {
+        let Some(timestamp) = entry.timestamp else {
+            out.push_str(&entry.command);
+            out.push('\n');
+            continue;
+        };
+
+        out.push_str(": ");
+        out.push_str(&timestamp.to_string());
+        out.push_str(":0;");
+
+        let lines: Vec<&str> = entry.command.split('\n').collect();
+        let last = lines.len() - 1;
+        for (i, line) in lines.iter().enumerate() {
+            let literal_backslashes = line.chars().rev().take_while(|&c| c == '\\').count();
+            out.push_str(&line[..line.len() - literal_backslashes]);
+            for _ in 0..literal_backslashes * 2 {
+                out.push('\\');
+            }
+            if i != last {
+                out.push('\\');
+            }
+            out.push('\n');
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{iter, parse};
+    use super::{iter, parse, write};
     use crate::entry::HistoryEntry;
 
     struct Case {
@@ -213,5 +255,36 @@ mod tests {
                 entry("pwd", Some(1690000001)),
             ]
         );
+    }
+
+    #[test]
+    fn write_produces_the_expected_text() {
+        let entries = vec![
+            entry("ls -la", Some(1690000000)),
+            entry("echo a; echo b", Some(1690000001)),
+            entry("plain fallback line", None),
+        ];
+        assert_eq!(
+            write(&entries),
+            ": 1690000000:0;ls -la\n: 1690000001:0;echo a; echo b\nplain fallback line\n"
+        );
+    }
+
+    #[test]
+    fn write_then_parse_round_trips() {
+        let cases: Vec<Vec<HistoryEntry>> = vec![
+            vec![entry("ls -la", Some(1690000000))],
+            vec![entry("echo a; echo b", Some(1690000000))],
+            vec![entry("echo one\nand two", Some(1690000000))],
+            vec![entry("echo one\\", Some(1690000000))],
+            vec![entry("echo one\\\nand two", Some(1690000000))],
+            vec![entry("", Some(1690000000))],
+            vec![entry("plain line", None)],
+            vec![],
+        ];
+
+        for entries in cases {
+            assert_eq!(parse(&write(&entries)), entries);
+        }
     }
 }

@@ -60,9 +60,31 @@ fn parse_timestamp_comment(line: &str) -> Option<i64> {
     digits.parse().ok()
 }
 
+/// Serializes `entries` back into bash history text.
+///
+/// An entry with a timestamp gets a `#<epoch>` comment line ahead of the
+/// command, matching what `HISTTIMESTAMP` produces; an entry without one is
+/// written as a bare command line. A command that itself starts with `#`
+/// and is all digits is indistinguishable from a timestamp comment once
+/// written — that ambiguity is inherent to the format, not something this
+/// library introduces.
+pub fn write(entries: &[HistoryEntry]) -> String {
+    let mut out = String::new();
+    for entry in entries {
+        if let Some(timestamp) = entry.timestamp {
+            out.push('#');
+            out.push_str(&timestamp.to_string());
+            out.push('\n');
+        }
+        out.push_str(&entry.command);
+        out.push('\n');
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{iter, parse};
+    use super::{iter, parse, write};
     use crate::entry::HistoryEntry;
 
     struct Case {
@@ -140,5 +162,31 @@ mod tests {
             first_two,
             vec![entry("ls -la", Some(1690000000)), entry("pwd", None)]
         );
+    }
+
+    #[test]
+    fn write_produces_the_expected_text() {
+        let entries = vec![
+            entry("ls -la", Some(1690000000)),
+            entry("pwd", None),
+            entry("whoami", Some(1690000001)),
+        ];
+        assert_eq!(
+            write(&entries),
+            "#1690000000\nls -la\npwd\n#1690000001\nwhoami\n"
+        );
+    }
+
+    #[test]
+    fn write_then_parse_round_trips() {
+        let cases: Vec<Vec<HistoryEntry>> = vec![
+            vec![entry("ls -la", Some(1690000000)), entry("pwd", None)],
+            vec![entry("git status", None)],
+            vec![],
+        ];
+
+        for entries in cases {
+            assert_eq!(parse(&write(&entries)), entries);
+        }
     }
 }

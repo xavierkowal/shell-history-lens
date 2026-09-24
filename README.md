@@ -71,6 +71,12 @@ fn main() {
     let first_git_command = shell_history_lens::iter_bash(bash_history)
         .find(|entry| entry.command.starts_with("git"));
     println!("{first_git_command:?}");
+
+    // Each format also serializes back the other way with `write_*`, so you
+    // can filter or edit a history and hand back valid history text.
+    let entries = parse_bash(bash_history);
+    let rewritten = shell_history_lens::write_bash(&entries);
+    assert_eq!(parse_bash(&rewritten), entries);
 }
 ```
 
@@ -89,6 +95,13 @@ fn main() {
   parsing, exposed as a lazy iterator instead of a `Vec`, for callers who
   want to stop early or avoid holding a whole large history file's worth of
   parsed entries at once.
+- `write_bash` / `write_zsh_extended` / `write_fish` — the inverse of the
+  three parsers: turn a slice of `HistoryEntry` back into that format's
+  text. `write_zsh_extended` re-encodes multi-line commands and literal
+  trailing backslashes the same way zsh itself does; `write_fish` redoes
+  the `\\`/`\n` escaping. Round-tripping a file through `parse_*` and then
+  the matching `write_*` reproduces equivalent entries (`write_fish` drops
+  the `paths:` block, since `HistoryEntry` has nowhere to keep it).
 
 ## License
 
